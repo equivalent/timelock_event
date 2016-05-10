@@ -1,3 +1,3 @@
-module TimelockEvent
+class TimelockEvent
   VERSION = "0.1.0"
 end
