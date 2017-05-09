@@ -14,15 +14,69 @@ And then execute:
 
 ## Usage
 
-TODO: Write usage instructions here
+Given you have a Ruby on Rails application with Active Job
+Given you use [redis rb](https://github.com/redis/redis-rb) client:
 
-## Development
+```ruby
+# app/jobs/import_songs_job.rb
 
-After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
+require "redis"
 
-To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and tags, and push the `.gem` file to [rubygems.org](https://rubygems.org).
+class ImportSongsJob < ActiveJob::Base
+  queue_as :default
 
-## Testing
+  def self.timelocker
+    @timelocker ||= begin
+      config = TimelockEvent::Config.new
+      config.redis_connection = Redis.new(host: 'localhost') # connection to your application Redis
+      config.unlock_hour_window = 2..3         # between 2 AM and 3 Am
+      config.lock_for = 24.hours               # lock for 24 hours
+      config.key = 'TimeLockEventImportSongs'  # redis key for this locker
+
+      TimelockEvent.new(config: config)
+    end
+  end
+
+  def perform
+    body = HTTParty.get('http://my-song-domain.com/user/1234')
+    JSON.parse(body).each do |song|
+      # ....
+    end
+  end
+end
+```
+
+```ruby
+# app/controllers/maintenance_controller.rb
+class MaintenanceController < ActionController::Metal    # really slim Rails enviroment for your controller
+  include AbstractController::Rendering
+  include ActionView::Layouts
+
+  def pull_songs
+    ImportSongsJob.timelocker.transaction do
+      ImportSongsJob.perform_later
+    end
+
+    render text: "ok"
+  end
+end
+```
+
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  get '/maintenance/pull_songs' => "maintenance#pull_songs"
+end
+```
+
+Now your endpoint will `/maintenance/pull_songs` will schedule your task
+only if it receives request in given timeframe (in this case 2 AM - 3 AM)
+
+You can configure [request repeater](https://github.com/Pobble/request_repeater) to tak care of it.
+
+## Developing & Testing
+
+git clone this repo and run tests:
 
 ```
 TEST_REDIS_HOST=localhost rake
@@ -37,7 +91,7 @@ TEST_REDIS_HOST=localhost rspec spec/timelock_event_spec.rb
 
 ## Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/[USERNAME]/timelock_event. This project is intended to be a safe, welcoming space for collaboration, and contributors are expected to adhere to the [Contributor Covenant](http://contributor-covenant.org) code of conduct.
+Bug reports and pull requests are welcome on GitHub at https://github.com/equivalent/timelock_event. This project is intended to be a safe, welcoming space for collaboration, and contributors are expected to adhere to the [Contributor Covenant](http://contributor-covenant.org) code of conduct.
 
 
 ## License
